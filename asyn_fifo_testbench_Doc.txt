@@ -1,0 +1,896 @@
+package:-
+
+package fifo_pkg;
+`include "uvm_pkg.sv"
+`include "uvm_macros.svh"
+`include "wr_seq_item.sv"
+`include "rd_seq_item.sv"
+`include "fifo_wr_sequencer.sv"
+`include "fifo_rd_sequencer.sv"
+`include "wr_sequence.sv"
+`include "rd_sequence.sv"
+`include "virtual_sequencer.sv"
+`include "virtual_sequence.sv"
+`include "fifo_wr_driver.sv"
+`include "fifo_rd_driver.sv"
+`include "fifo_wr_monitor.sv"
+`include "fifo_rd_monitor.sv"
+`include "fifo_wr_agent.sv"
+`include "fifo_rd_agent.sv"
+`include "fifo_scoreboard.sv"
+`include "fifo_subscriber.sv"
+`include "fifo_environment.sv"
+`include "fifo_test.sv"
+endpackage
+----------------------------------------------------------------------------------
+interface:-
+
+interface fifo_interface (input logic wclk,rclk,wrst_n,rrst_n);
+  logic [7:0] wdata;
+  logic [7:0] rdata;
+  logic winc;
+  logic rinc;
+  logic wfull;
+  logic rempty;
+  
+  clocking wr_drv_cb @(posedge wclk);
+  default input #0 output #0;
+    output wdata;
+    output winc;
+    //input wfull;
+  endclocking 
+  
+  clocking wr_mon_cb @(posedge wclk);
+  default input #0 output #0;
+    input wfull;
+    input wdata;
+    input winc;
+  endclocking 
+  
+  clocking rd_drv_cb @(posedge rclk);
+  default input #0 output #0;  
+    output rinc;
+    //input rempty;
+  endclocking
+  
+  clocking rd_mon_cb @(posedge rclk);
+  default input #0 output #0;
+    input rempty;
+    input rdata;
+    input rinc;
+  endclocking
+  
+  modport wr_drv(clocking wr_drv_cb);
+  modport wr_mon(clocking wr_mon_cb);
+  modport rd_drv(clocking rd_drv_cb);
+  modport rd_mon(clocking rd_mon_cb);
+    
+    //Assertions 
+property p1;
+  @(posedge wclk) disable iff(!(wrst_n && rrst_n))
+  $rose(winc) && $past(rempty) |=>  !rempty;
+endproperty
+    assert property (p1)
+      else $error("p1 FAILED: Data changed during write when FULL!");
+
+  property p2;
+    @(posedge wclk) disable iff(!wrst_n)
+      (winc && wfull) |-> $stable(wdata);
+  endproperty
+  assert property(p2)
+    else $error("p2 FAILED: Data changed during write when FULL!");
+
+  property p3;
+    @(posedge rclk) disable iff(!rrst_n)
+      rinc |-> !rempty;
+  endproperty
+  assert property(p3)
+    else $error("p3 FAILED: Read attempted when FIFO is EMPTY!");
+
+  property p4;
+    @(posedge rclk) disable iff(!rrst_n)
+      (rinc && !rempty) |-> !$isunknown(rdata);
+  endproperty
+  assert property(p4)
+    else $error("p4 FAILED: rdata is X/Z on valid read!");
+
+  property p5;
+    @(posedge wclk) disable iff(!wrst_n)
+      !(wfull && rempty);
+  endproperty
+  assert property(p5)
+    else $error("p5 FAILED: FIFO signaled FULL and EMPTY simultaneously!");
+    
+endinterface
+
+------------------------------------------------------------------------------------------
+
+write_seq_item:-
+
+ `include "uvm_macros.svh"
+  import uvm_pkg::*;
+
+class wr_seq_item extends uvm_sequence_item;
+
+  randc bit [7:0] wdata;
+  rand bit winc;
+  bit wfull;
+
+  function new(string name = "write_seq");
+    super.new(name);
+  endfunction 
+  
+  `uvm_object_utils_begin(wr_seq_item)
+  `uvm_field_int(wdata,UVM_ALL_ON)
+  `uvm_field_int(winc,UVM_ALL_ON)
+  `uvm_field_int(wfull,UVM_ALL_ON) 
+  `uvm_object_utils_end
+  
+endclass
+
+-------------------------------------------------------------------------------------------------
+
+read_seq_item:-
+
+ `include "uvm_macros.svh"
+  import uvm_pkg::*;
+
+class rd_seq_item extends uvm_sequence_item;
+  
+  rand bit rinc;
+  bit [7:0] rdata;
+  bit rempty;
+  
+  function new(string name = "rd_seq_item");
+    super.new(name);
+  endfunction 
+  
+  `uvm_object_utils_begin(rd_seq_item)
+  `uvm_field_int(rdata,UVM_ALL_ON)
+  `uvm_field_int(rinc, UVM_ALL_ON)
+  `uvm_field_int(rempty,UVM_ALL_ON)
+  `uvm_object_utils_end
+endclass
+
+------------------------------------------------------------------------------------------------------
+
+write_sequence:-
+
+class wr_sequence1 extends uvm_sequence #(wr_seq_item);
+  
+  `uvm_object_utils(wr_sequence1)
+  
+  function new(string name = "wr_sequence");
+    super.new(name);
+  endfunction 
+  
+  virtual task body();
+    req = wr_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{winc == 1;})
+  endtask
+endclass
+
+class wr_sequence2 extends uvm_sequence #(wr_seq_item);
+  
+  `uvm_object_utils(wr_sequence2)
+  
+  function new(string name = "wr_sequence");
+    super.new(name);
+  endfunction 
+  
+  virtual task body();
+    req = wr_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{winc == 0;})
+  endtask
+endclass
+
+class wr_sequence3 extends uvm_sequence #(wr_seq_item);
+  
+  `uvm_object_utils(wr_sequence3)
+  
+  function new(string name = "wr_sequence");
+    super.new(name);
+  endfunction 
+  
+  virtual task body();
+    req = wr_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{winc == 1;})
+  endtask
+endclass
+
+class wr_sequence4 extends uvm_sequence #(wr_seq_item);
+  
+  `uvm_object_utils(wr_sequence4)
+  
+  function new(string name = "wr_sequence");
+    super.new(name);
+  endfunction 
+  
+  virtual task body();
+    req = wr_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{winc == 0;})
+  endtask
+endclass
+
+---------------------------------------------------------------------------------------------------------------------
+
+read_sequence:-
+
+class rd_sequence1 extends uvm_sequence #(rd_seq_item);
+  
+  `uvm_object_utils(rd_sequence1)
+  
+  function new(string name = "rd_sequence");
+    super.new(name);
+  endfunction
+  
+  virtual task body();
+    req = rd_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{rinc == 1;})
+  endtask
+endclass
+
+class rd_sequence2 extends uvm_sequence #(rd_seq_item);
+  
+  `uvm_object_utils(rd_sequence2)
+  
+  function new(string name = "rd_sequence");
+    super.new(name);
+  endfunction
+  
+  virtual task body();
+    req = rd_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{rinc == 0;})
+ 
+  endtask
+endclass
+
+class rd_sequence3 extends uvm_sequence #(rd_seq_item);
+  
+  `uvm_object_utils(rd_sequence3)
+  
+  function new(string name = "rd_sequence");
+    super.new(name);
+  endfunction
+  
+  virtual task body();
+    req = rd_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{rinc == 0;})
+  endtask
+endclass
+
+class rd_sequence4 extends uvm_sequence #(rd_seq_item);
+  
+  `uvm_object_utils(rd_sequence4)
+  
+  function new(string name = "rd_sequence");
+    super.new(name);
+  endfunction
+  
+  virtual task body();
+    req = rd_seq_item::type_id::create("req");
+    `uvm_rand_send_with(req,{rinc == 1;})
+  endtask
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+write_sequencer:-
+
+class fifo_wr_sequencer extends uvm_sequencer #(wr_seq_item);
+  
+  `uvm_component_utils(fifo_wr_sequencer)
+  
+  function new(string name = "fifo_wr_sequencer",uvm_component parent);
+    super.new(name,parent);
+  endfunction
+endclass
+
+--------------------------------------------------------------------------------------------------
+read_sequencer:-
+
+class fifo_rd_sequencer extends uvm_sequencer #(rd_seq_item);
+  
+  `uvm_component_utils(fifo_rd_sequencer)
+  
+  function new(string name = "fifo_rd_sequencer",uvm_component parent);
+    super.new(name,parent);
+  endfunction
+  
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+write_driver:-
+
+class fifo_wr_driver extends uvm_driver #(wr_seq_item);
+  
+  virtual fifo_interface.wr_drv vif;
+  `uvm_component_utils(fifo_wr_driver)
+  
+  function new(string name = "fifo_wr_driver",uvm_component parent);
+    super.new(name,parent);
+  endfunction 
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(!uvm_config_db #(virtual fifo_interface)::get(this,"","password",vif))
+      `uvm_fatal("WRITE_DRIVER","!!!No virtual interface!!!");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin 
+      seq_item_port.get_next_item(req);
+      drive();
+      seq_item_port.item_done();
+    end
+  endtask
+  
+  task drive();
+    @(posedge vif.wr_drv_cb)
+    //     while(vif.wr_drv_cb.wfull)
+//       begin 
+//         @(posedge vif.wr_drv_cb);
+//       end
+    vif.wr_drv_cb.wdata <= req.wdata;
+    vif.wr_drv_cb.winc <= req.winc;
+    `uvm_info("WRITE_DRIVER",$sformatf("Driving from write driver"),UVM_LOW);
+    req.print();
+  endtask
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+read_driver:-
+
+class fifo_rd_driver extends uvm_driver #(rd_seq_item);
+  
+  virtual fifo_interface.rd_drv vif;
+  `uvm_component_utils(fifo_rd_driver)
+  
+  function new(string name = "fifo_rd_driver",uvm_component parent);
+    super.new(name,parent);
+  endfunction 
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(!uvm_config_db #(virtual fifo_interface)::get(this,"","password",vif))
+      `uvm_fatal("READ_DRIVER","!!!No virtual interface!!!");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin 
+      seq_item_port.get_next_item(req);
+      drive();
+      seq_item_port.item_done();
+    end
+  endtask
+  
+  task drive();
+    @(posedge vif.rd_drv_cb)
+    //     while(vif.rd_drv_cb.rempty)
+//           begin 
+    //         @(posedge vif.rd_drv_cb);
+//           end
+    vif.rd_drv_cb.rinc <= req.rinc;
+    `uvm_info("READ_DRIVER",$sformatf("Driving from read driver"),UVM_LOW);
+    req.print();
+  endtask
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+write_monitor:-
+
+class fifo_wr_monitor extends uvm_monitor;
+  
+  virtual fifo_interface.wr_mon vif;
+  `uvm_component_utils(fifo_wr_monitor)
+  
+  uvm_analysis_port #(wr_seq_item) wr_mon_port;
+  
+  wr_seq_item req;
+  
+  function new(string name = "fifo_wr_monitor",uvm_component parent);
+    super.new(name,parent);
+    req = new;
+    wr_mon_port = new("mon_port",this);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(!uvm_config_db #(virtual fifo_interface)::get(this,"","password",vif))
+      `uvm_fatal("WRITE_MONITOR","!!! NO Interface Found !!!");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin 
+      repeat(2)@(posedge vif.wr_mon_cb);
+      req.winc = vif.wr_mon_cb.winc;
+      req.wdata = vif.wr_mon_cb.wdata;
+      req.wfull = vif.wr_mon_cb.wfull;
+      wr_mon_port.write(req);
+      `uvm_info("WRITE_MONITOR",$sformatf("capturing from write monitor & sending to scoreboard"),UVM_LOW);
+      req.print();
+    end
+  endtask
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+read_monitor:-
+
+class fifo_rd_monitor extends uvm_monitor;
+  
+  virtual fifo_interface.rd_mon vif;
+  `uvm_component_utils(fifo_rd_monitor)
+  
+  uvm_analysis_port #(rd_seq_item) rd_mon_port;
+  
+  rd_seq_item req;
+  
+  function new(string name = "fifo_rd_monitor",uvm_component parent);
+    super.new(name,parent);
+    req = new;
+    rd_mon_port = new("mon_port1",this);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(!uvm_config_db #(virtual fifo_interface)::get(this,"","password",vif))
+      `uvm_fatal("WRITE_MONITOR","!!! NO Interface Found !!!");
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin 
+      repeat(2)@(posedge vif.rd_mon_cb);
+      req.rinc = vif.rd_mon_cb.rinc;
+      req.rdata = vif.rd_mon_cb.rdata;
+      req.rempty = vif.rd_mon_cb.rempty;
+      rd_mon_port.write(req);
+      `uvm_info("READ_MONITOR",$sformatf("capturing from read monitor & sending to scoreboard"),UVM_LOW);
+      req.print();
+    end
+  endtask
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+write_agent:-
+
+class fifo_wr_agent extends uvm_agent;
+  
+  `uvm_component_utils(fifo_wr_agent)
+  
+  fifo_wr_sequencer wr_seqr;
+  fifo_wr_driver wr_drv;
+  fifo_wr_monitor wr_mon;
+  
+  function new(string name = "fifo_wr_agent",uvm_component parent);
+    super.new(name,parent);
+  endfunction 
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(get_is_active() == UVM_ACTIVE) begin
+    wr_seqr = fifo_wr_sequencer::type_id::create("seqr",this);
+    wr_drv = fifo_wr_driver::type_id::create("srv",this);
+    end
+    wr_mon = fifo_wr_monitor::type_id::create("mon",this);
+  endfunction 
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    if(get_is_active() == UVM_ACTIVE) begin
+      wr_drv.seq_item_port.connect(wr_seqr.seq_item_export);
+    end
+  endfunction
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+read_agent:-
+
+class fifo_rd_agent extends uvm_agent;
+  
+  `uvm_component_utils(fifo_rd_agent)
+  
+  fifo_rd_sequencer rd_seqr;
+  fifo_rd_driver rd_drv;
+  fifo_rd_monitor rd_mon;
+  
+  function new(string name = "fifo_rd_agent",uvm_component parent);
+    super.new(name,parent);
+  endfunction 
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if(get_is_active() == UVM_ACTIVE) begin
+      rd_seqr = fifo_rd_sequencer::type_id::create("rd_seqr",this);
+      rd_drv = fifo_rd_driver::type_id::create("rd_drv",this);
+    end
+    rd_mon = fifo_rd_monitor::type_id::create("mon",this);
+  endfunction 
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    if(get_is_active() == UVM_ACTIVE)
+      rd_drv.seq_item_port.connect(rd_seqr.seq_item_export);
+  endfunction
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+scoreboard:-
+
+class fifo_scoreboard extends uvm_scoreboard;
+  
+  `uvm_component_utils(fifo_scoreboard)
+  
+  wr_seq_item wr_item;
+  rd_seq_item rd_item;
+  
+  uvm_tlm_analysis_fifo #(wr_seq_item) wr_scb_port;
+  uvm_tlm_analysis_fifo #(rd_seq_item) rd_scb_port;
+
+  bit write_map [bit[7:0]]; 
+  bit read_map  [bit[7:0]];  
+
+  int depth = 16;
+
+  function new(string name = "fifo_scoreboard", uvm_component parent);
+    super.new(name, parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    wr_scb_port = new("wr_port", this);
+    rd_scb_port = new("rd_port", this);
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin 
+      wr_scb_port.get(wr_item);
+      rd_scb_port.get(rd_item);
+      compute(wr_item, rd_item);
+    end
+  endtask
+
+  task compute(wr_seq_item write, rd_seq_item read);
+    if (write.winc) begin
+      if (write_map.num() == depth) begin
+        if (!write.wfull) begin
+          `uvm_error("SCOREBOARD", "DUT did not assert wfull when FIFO is full");end
+        else begin
+          `uvm_info("SCOREBOARD", "WRITE blocked due to FIFO full (as expected)", UVM_LOW);end
+      end
+      else begin
+        write_map[write.wdata] = 1;
+        `uvm_info("SCOREBOARD", 
+          $sformatf("WRITE: Stored data %0h (entries=%0d)", write.wdata, write_map.num()), 
+          UVM_MEDIUM);
+      end
+    end
+    if(read.rinc) begin
+      if (write_map.num() == 0) begin
+        if (!read.rempty) begin
+          `uvm_error("SCOREBOARD", "DUT did not assert rempty when FIFO is empty");end
+        else begin
+          `uvm_info("SCOREBOARD", "READ blocked due to FIFO empty (as expected)", UVM_LOW);end
+      end
+      else begin        
+        read_map[read.rdata] = 1;
+        if (write_map.exists(read.rdata)) begin
+          `uvm_info("SCOREBOARD",$sformatf("MATCH: Data %0h found in both write and read maps", read.rdata),UVM_LOW);
+        end
+        else begin
+          `uvm_error("SCOREBOARD",$sformatf("DATA MISMATCH: Read %0h not found in write_map", read.rdata));
+        end
+      end
+    end
+  endtask
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+subscriber:-
+
+class fifo_subscriber extends uvm_component;
+  
+  `uvm_component_utils(fifo_subscriber)
+  
+  uvm_tlm_analysis_fifo #(wr_seq_item) wr_cov_port;
+  uvm_tlm_analysis_fifo #(rd_seq_item) rd_cov_port;
+  
+  wr_seq_item wr_item;
+  rd_seq_item rd_item;
+  
+  real wr_cov_report;
+  real rd_cov_report;
+  
+  covergroup cg1;
+    write_data: coverpoint wr_item.wdata{
+      bins data_first = {[0:127]};
+      bins data_last = {[128:255]};
+    }
+    wfull: coverpoint wr_item.wfull{
+      bins full_flag[] = {0,1};
+    }
+    winc: coverpoint wr_item.winc{
+      bins winc[] = {0,1};
+    }
+  endgroup
+  
+  covergroup cg2;
+    read_data: coverpoint rd_item.rdata{
+      bins data_first = {[0:127]};
+      bins data_last = {[128:255]};
+    }
+    rempty: coverpoint rd_item.rempty{
+      bins empty_flag[] = {0,1};
+    }
+    rinc: coverpoint rd_item.rinc{
+      bins rinc[] = {0,1};
+    }
+  endgroup
+  
+  function new(string name = "fifo_subscriber", uvm_component parent);
+    super.new(name, parent);
+    wr_cov_port = new("wr_cov_port",this);
+    rd_cov_port = new("rd_cov_port",this); 
+    cg1 = new;
+    cg2 = new;
+  endfunction 
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin
+    wr_cov_port.get(wr_item);
+    cg1.sample();
+    rd_cov_port.get(rd_item);
+    cg2.sample();
+    end
+  endtask
+  
+  virtual function void extract_phase(uvm_phase phase);
+    super.extract_phase(phase);
+    wr_cov_report = cg1.get_coverage();
+    rd_cov_report = cg2.get_coverage();
+  endfunction
+  
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("get_name()",$sformatf("[WRITE] coverage = %0.2f",wr_cov_report),UVM_LOW);
+    `uvm_info("get_name()",$sformatf("[READ] coverage = %0.2f",rd_cov_report),UVM_LOW);
+  endfunction
+  
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+environment:-
+
+class fifo_environment extends uvm_env;
+  
+  `uvm_component_utils(fifo_environment)
+  
+  fifo_rd_agent rd_agt;
+  fifo_wr_agent wr_agt;
+  fifo_scoreboard scb;
+  fifo_subscriber cov;
+  
+  virtual_sequencer v_seqr;
+  
+  function new(string name = "fifo_environmet",uvm_component parent);
+    super.new(name,parent);
+  endfunction
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    rd_agt = fifo_rd_agent::type_id::create("rd_agt",this);
+    wr_agt = fifo_wr_agent::type_id::create("wr_agt",this);
+    scb    = fifo_scoreboard::type_id::create("scb",this);
+    cov    = fifo_subscriber::type_id::create("cov",this);
+    v_seqr = virtual_sequencer::type_id::create("v_seqr",this);
+  endfunction
+  
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    wr_agt.wr_mon.wr_mon_port.connect(scb.wr_scb_port.analysis_export);
+    wr_agt.wr_mon.wr_mon_port.connect(cov.wr_cov_port.analysis_export);
+    rd_agt.rd_mon.rd_mon_port.connect(scb.rd_scb_port.analysis_export);
+    rd_agt.rd_mon.rd_mon_port.connect(cov.rd_cov_port.analysis_export);
+    
+    v_seqr.wr_seqr = wr_agt.wr_seqr;
+    v_seqr.rd_seqr = rd_agt.rd_seqr;
+  endfunction 
+  
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+test:-
+
+class fifo_test extends uvm_test;
+  
+  `uvm_component_utils(fifo_test)
+  
+  fifo_environment env;
+  virtual_sequence v_seq;
+  
+  function new(string name = "fifo_test", uvm_component parent);
+    super.new(name,parent);
+  endfunction 
+  
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    env = fifo_environment::type_id::create("env",this);
+  endfunction
+  
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    phase.raise_objection(this);
+    v_seq = virtual_sequence::type_id::create("v_seq");
+    repeat(2) begin
+      v_seq.start(env.v_seqr);
+    end
+    phase.drop_objection(this);
+  endtask
+endclass
+--------------------------------------------------------------------------------------------------
+
+virtual_sequence:-
+
+class virtual_sequence extends uvm_sequence;
+  
+  wr_sequence1 wr_seq1;
+  wr_sequence2 wr_seq2;
+  wr_sequence3 wr_seq3;
+  wr_sequence4 wr_seq4;
+  
+  rd_sequence1 rd_seq1;
+  rd_sequence2 rd_seq2;
+  rd_sequence3 rd_seq3;
+  rd_sequence4 rd_seq4;
+  
+  fifo_wr_sequencer wr_seqr;
+  fifo_rd_sequencer rd_seqr;
+  
+  `uvm_object_utils(virtual_sequence)
+  `uvm_declare_p_sequencer(virtual_sequencer)
+  
+  function new(string name = "virtual_seq");
+    super.new(name);
+  endfunction 
+  
+  virtual task body();
+    wr_seq1 = wr_sequence1::type_id::create("wr_Seq1");
+    wr_seq2 = wr_sequence2::type_id::create("wr_Seq2");
+    wr_seq3 = wr_sequence3::type_id::create("wr_Seq3");
+    wr_seq4 = wr_sequence4::type_id::create("wr_Seq4");
+    
+    rd_seq1 = rd_sequence1::type_id::create("rd_seq1");
+    rd_seq2 = rd_sequence2::type_id::create("rd_seq2");
+    rd_seq3 = rd_sequence3::type_id::create("rd_seq3");
+    rd_seq4 = rd_sequence4::type_id::create("rd_seq4");
+    
+    fork
+      begin
+        wr_seq1.start(p_sequencer.wr_seqr);
+        #100;
+      end
+      begin
+        rd_seq1.start(p_sequencer.rd_seqr);
+        #100;
+      end
+    join
+    fork
+        wr_seq2.start(p_sequencer.wr_seqr);
+        rd_seq2.start(p_sequencer.rd_seqr);
+    join
+    fork
+      begin
+        wr_seq3.start(p_sequencer.wr_seqr);
+        #100;
+      end
+        rd_seq3.start(p_sequencer.rd_seqr);
+    join
+    fork   
+        wr_seq4.start(p_sequencer.wr_seqr);
+     begin
+        rd_seq4.start(p_sequencer.rd_seqr);
+        #1000;
+     end
+   join
+  endtask
+  
+endclass
+
+
+--------------------------------------------------------------------------------------------------
+
+virtual sequencer:-
+
+class virtual_sequencer extends uvm_sequencer;
+  
+  `uvm_component_utils(virtual_sequencer)
+  
+  fifo_wr_sequencer wr_seqr;
+  fifo_rd_sequencer rd_seqr;
+  
+  function new(string name = "virtual_sequencer", uvm_component parent);
+    super.new(name, parent);
+  endfunction 
+  
+endclass
+
+--------------------------------------------------------------------------------------------------
+
+top:-
+
+
+`include "uvm_pkg.sv"
+`include "uvm_macros.svh"
+`include "fifo_pkg.sv"
+`include "fifo_interface.sv"
+`include "design.sv"
+
+module fifo_top;
+  
+  import uvm_pkg::*;  
+  import fifo_pkg::*;
+  
+  bit wclk;
+  bit rclk;
+  bit rrst_n;
+  bit wrst_n;
+  
+  always #5 wclk = ~wclk;
+  always #10 rclk = ~rclk;
+  
+  initial begin 
+    wclk = 0;
+    rclk = 0;
+    rrst_n = 0;
+    wrst_n = 0;
+    
+    #10 rrst_n = 1;
+    wrst_n = 1;
+  end
+  
+  
+  fifo_interface intf(wclk,rclk,wrst_n,rrst_n);
+  
+  FIFO dut( .rdata(intf.rdata),
+           .wfull(intf.wfull),
+           .rempty(intf.rempty),
+           .wdata(intf.wdata),
+           .winc(intf.winc),
+           .wclk(wclk),
+           .wrst_n(wrst_n),
+           .rinc(intf.rinc),
+           .rclk(rclk),
+           .rrst_n(rrst_n));
+  
+  initial begin 
+    uvm_config_db #(virtual fifo_interface)::set(null,"*","password",intf);
+    $dumpfile("wave.vcd");
+    $dumpvars;
+  end
+  
+  initial begin 
+    run_test("fifo_test");
+    #10000 $finish;
+  end
+endmodule
+
